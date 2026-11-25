@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>圣诞树</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  .greeting {
+    position: absolute;
+    left: 4.5%;
+    top: 32%;
+    color: #fff;
+    font-family: "Brush Script MT", "Segoe Script", "Great Vibes", "Lucida Handwriting", cursive;
+    pointer-events: none;
+    user-select: none;
+  }
+  .greeting .title {
+    font-size: clamp(28px, 4.2vw, 52px);
+    font-style: italic;
+    letter-spacing: 1px;
+    text-shadow: 0 0 12px rgba(255,255,255,0.55), 0 0 26px rgba(255,255,255,0.25);
+    white-space: nowrap;
+  }
+  .greeting .sub {
+    margin-top: 10px;
+    font-size: clamp(16px, 2.2vw, 26px);
+    font-style: italic;
+    opacity: 0.92;
+    text-shadow: 0 0 10px rgba(255,255,255,0.4);
+  }
+  #musicBtn {
+    position: absolute;
+    right: 28px;
+    bottom: 28px;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.35);
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    font-size: 20px;
+    cursor: pointer;
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    z-index: 10;
+  }
+  #musicBtn.on {
+    background: rgba(247,168,196,0.22);
+    border-color: rgba(247,168,196,0.6);
+    box-shadow: 0 0 18px rgba(247,168,196,0.35);
+  }
+  #musicBtn:hover { background: rgba(255,255,255,0.16); }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="greeting">
+  <div class="title">Merry Christmas</div>
+  <div class="sub">have a good day</div>
+</div>
+<button id="musicBtn" title="背景音乐">♪</button>
+
+<script>
+(function () {
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  let W = 0, H = 0;
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const FOV = 1000;
+
+  let cx = 0, cy = 0;
+  let R0 = 0, Hw = 0, baseY = 0;
+  let rot = 0;
+
+  let dust = [];        // 穿梭星尘
+  let nebulas = [];     // 星云尘埃团
+  let tree = [];
+  let heart = [];
+  let wreath = [];
+  let sparks = [];   // 爱心烟花粒子
+  let snow = [];      // 飘落并堆积的雪花
+  let loveGlyphs = []; // 堆成 LOVE U 字样的雪粒
+  let loveProgress = 0; // 字样堆积进度 0→1
+
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    cx = W * 0.5;
+    cy = H * 0.52;
+    R0 = Math.min(W * 0.18, H * 0.30);
+    Hw = H * 0.60;
+    baseY = H * 0.30;
+
+    buildDust();
+    buildNebulas();
+    buildTree();
+    buildSnow();
+    buildLoveText();
+  }
+
+  function project(x, y, z) {
+    const s = FOV / (FOV + z);
+    return { x: cx + x * s, y: cy + y * s, s: s };
+  }
+
+  function drawSnowflake(x, y, r, angle, alpha) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(0.6, r * 0.18);
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 2; i++) {
+      ctx.rotate(Math.PI / 3);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(0, -r);
+      ctx.moveTo(0, -r * 0.55);
+      ctx.lineTo(r * 0.26, -r * 0.78);
+      ctx.moveTo(0, -r * 0.55);
+      ctx.lineTo(-r * 0.26, -r * 0.78);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---------- 穿梭宇宙星尘（3D 球体纵深 + 视差） ----------
+  function spawnDust(init) {
+    const visitor = Math.random() < 0.09;
+    return {
+      visitor: visitor,
+      x: visitor ? (Math.random() - 0.5) * W * 0.12 : (Math.random() - 0.5) * W * 1.7,
+      y: visitor ? (Math.random() - 0.5) * H * 0.5 : (Math.random() - 0.5) * H * 1.7,
+      z: init ? -1200 + Math.random() * 1500 : -1200,
+      r: Math.random() * 1.8 + 0.3,
+      speed: 1.0 + Math.random() * 2.2,
+      phase: Math.random() * Math.PI * 2,
+      tw: Math.random() * 0.5 + 0.5,
+      bright: Math.random() < 0.2
+    };
+  }
+
+  // ---------- 爱心烟花 ----------
+  const sparkColors = ['#f7a8c4', '#ff8fa3', '#ffb3c9', '#7ee08a', '#b6e86a', '#ffd98a'];
+  function spawnHeartBurst(px, py, pz) {
+    const scale = Math.min(W, H) * (0.055 + Math.random() * 0.02);
+    const N = 96;
+    const color = sparkColors[Math.floor(Math.random() * sparkColors.length)];
+    // 爆心闪光
+    sparks.push({
+      flash: true,
+      cx0: px, cy0: py, cz0: pz, ox: px, oy: py, oz: pz,
+      fx: px, fy: py, fz: pz,
+      life: 1, decay: 0.025, size: 3.0, color: '#ffffff'
+    });
+    for (let i = 0; i < N; i++) {
+      const a = i / N * Math.PI * 2;
+      const hx = 16 * Math.pow(Math.sin(a), 3);
+      const hy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
+      const tx = px + hx / 16 * scale;
+      const ty = py - hy / 16 * scale;
+      const tz = pz + (Math.random() - 0.5) * 14;
+      // 随机迸发方向与爆发峰值位置
+      const ang = Math.random() * Math.PI * 2;
+      const up = Math.random() - 0.35;
+      const bd = scale * (1.5 + Math.random() * 0.8);
+      const fx = px + Math.cos(ang) * bd;
+      const fy = py + up * bd;
+      const fz = pz + (Math.random() - 0.5) * bd;
+      sparks.push({
+        cx0: px, cy0: py, cz0: pz,
+        ox: tx, oy: ty, oz: tz,
+        fx: fx, fy: fy, fz: fz,
+        life: 1,
+        decay: 0.003 + Math.random() * 0.003,
+        size: Math.random() * 1.8 + 1.0,
+        color: color
+      });
+    }
+  }
+  function buildDust() {
+    dust = [];
+    const n = Math.floor((W * H) / 2600);
+    for (let i = 0; i < n; i++) dust.push(spawnDust(true));
+  }
+
+  // ---------- 雪花：顶部飘落，落地后堆积停留 ----------
+  function spawnSnow(init) {
+    return {
+      x: Math.random() * W,
+      y: init ? Math.random() * H : -10,
+      vy: 0.5 + Math.random() * 0.9,
+      sway: 0.4 + Math.random() * 0.8,
+      phase: Math.random() * Math.PI * 2,
+      r: Math.random() * 1.8 + 2.2,
+      angle: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 0.02,
+      landed: false,
+      groundY: H * 0.86 + Math.random() * H * 0.13
+    };
+  }
+  function buildSnow() {
+    snow = [];
+    const n = Math.floor(W / 6);
+    for (let i = 0; i < n; i++) snow.push(spawnSnow(true));
+  }
+
+  // 离屏采样 LOVE U 笔画，生成堆成字样的雪粒
+  function buildLoveText() {
+    loveGlyphs = [];
+    loveProgress = 0;
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    const o = off.getContext('2d');
+    const size = Math.min(W * 0.13, H * 0.15);
+    o.font = `italic ${size}px Georgia, "Times New Roman", serif`;
+    o.textAlign = 'center';
+    o.textBaseline = 'middle';
+    o.fillStyle = '#ffffff';
+    o.fillText('Love U', cx, H * 0.905);
+    const img = o.getImageData(0, 0, W, H).data;
+    const step = 2;
+    for (let y = 0; y < H; y += step) {
+      for (let x = 0; x < W; x += step) {
+        const idx = (y * W + x) * 4;
+        const a = img[idx + 3];
+        if (a > 50 && Math.random() > 0.18) {
+          loveGlyphs.push({
+            tx: x + (Math.random() - 0.5) * step * 1.6,
+            ty: y + (Math.random() - 0.5) * step * 1.6,
+            sx: x + (Math.random() - 0.5) * step + (Math.random() - 0.5) * 30,
+            sy: y + 30 + Math.random() * 90,
+            th: Math.random(),
+            r: 0.7 + Math.random() * 0.6,
+            a: a / 255,
+            phase: Math.random() * Math.PI * 2
+          });
+        }
+      }
+    }
+  }
+
+  // ---------- 星云尘埃团 ----------
+  function buildNebulas() {
+    nebulas = [];
+    const palette = [
+      'rgba(120,80,170,0.07)',
+      'rgba(170,90,150,0.06)'
+    ];
+    for (let i = 0; i < 6; i++) {
+      nebulas.push({
+        x: (Math.random() - 0.5) * W * 1.2,
+        y: (Math.random() - 0.5) * H * 1.0,
+        z: -900 - Math.random() * 300,
+        r: Math.min(W, H) * (0.32 + Math.random() * 0.28),
+        color: palette[i % palette.length],
+        drift: Math.random() * Math.PI * 2,
+        vx: (Math.random() - 0.5) * 0.15
+      });
+    }
+  }
+
+  // ---------- 3D 螺旋圣诞树 ----------
+  function buildTree() {
+    tree = [];
+    heart = [];
+    const turns = 5.6;
+    const perTurn = 260;
+    const total = Math.floor(turns * perTurn);
+
+    for (let i = 0; i < total; i++) {
+      const t = i / total;
+      const y = baseY - t * Hw;
+      const r = R0 * Math.pow(1 - t, 1.18);
+      const ang = -Math.PI / 2 + t * Math.PI * 2 * turns;
+      const bx = Math.cos(ang) * r;
+      const bz = Math.sin(ang) * r;
+      const spread = (1 - t) * 14 + 3;
+      const count = t < 0.35 ? 4 : 3;
+      for (let k = 0; k < count; k++) {
+        tree.push({
+          x: bx + (Math.random() - 0.5) * spread,
+          y: y + (Math.random() - 0.5) * spread * 0.8,
+          z: bz + (Math.random() - 0.5) * spread * 1.3,
+          r: Math.random() * 1.8 + 0.7,
+          t: t,
+          ribbon: true,
+          phase: Math.random() * Math.PI * 2,
+          speed: Math.random() * 0.04 + 0.01,
+          hue: Math.random()
+        });
+      }
+    }
+
+    // 锥形体积填充
+    for (let i = 0; i < 2800; i++) {
+      const t = Math.pow(Math.random(), 0.85);
+      const y = baseY - t * Hw;
+      const r = R0 * Math.pow(1 - t, 1.18);
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * r;
+      tree.push({
+        x: Math.cos(a) * rr,
+        y: y + (Math.random() - 0.5) * 10,
+        z: Math.sin(a) * rr * 1.2,
+        r: Math.random() * 1.5 + 0.4,
+        t: t,
+        phase: Math.random() * Math.PI * 2,
+        speed: Math.random() * 0.04 + 0.01,
+        hue: Math.random()
+      });
+    }
+
+    // 底部水平圆盘
+    for (let i = 0; i < 2600; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = Math.sqrt(Math.random()) * R0 * 1.35;
+      tree.push({
+        x: Math.cos(a) * rr,
+        y: baseY - Math.random() * 70 - rr * 0.28,
+        z: Math.sin(a) * rr,
+        r: Math.random() * 1.6 + 0.4,
+        t: 0,
+        phase: Math.random() * Math.PI * 2,
+        speed: Math.random() * 0.04 + 0.01,
+        hue: Math.random()
+      });
+    }
+
+    // 顶部爱心
+    const hy = baseY - Hw - H * 0.015;
+    const hr = Math.min(W, H) * 0.035;
+    for (let i = 0; i < 280; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sx = 16 * Math.pow(Math.sin(a), 3);
+      const sy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
+      heart.push({
+        x: sx / 16 * hr + (Math.random() - 0.5) * 4,
+        y: hy - sy / 16 * hr + (Math.random() - 0.5) * 4,
+        z: (Math.random() - 0.5) * 12,
+        r: Math.random() * 1.6 + 0.6,
+        phase: Math.random() * Math.PI * 2,
+        speed: Math.random() * 0.05 + 0.02
+      });
+    }
+    // 爱心内部实心填充
+    for (let i = 0; i < 200; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sx = 16 * Math.pow(Math.sin(a), 3);
+      const sy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
+      const k = Math.sqrt(Math.random()) * 0.7;
+      heart.push({
+        x: sx / 16 * hr * k + (Math.random() - 0.5) * 3,
+        y: hy - sy / 16 * hr * k + (Math.random() - 0.5) * 3,
+        z: (Math.random() - 0.5) * 12,
+        r: Math.random() * 1.4 + 0.5,
+        phase: Math.random() * Math.PI * 2,
+        speed: Math.random() * 0.05 + 0.02
+      });
+    }
+  }
+
+  // ---------- 花环 ----------
+  function buildWreath() {
+    wreath = [];
+    const wx = W * 0.26;
+    const wy = -H * 0.02;
+    const wz = 120;
+    const R = Math.min(W, H) * 0.13;
+    const lights = 46;
+    for (let i = 0; i < lights; i++) {
+      const a = (i / lights) * Math.PI * 2;
+      wreath.push({
+        x: wx + Math.cos(a) * R,
+        y: wy + Math.sin(a) * R * 0.92,
+        z: wz + (Math.random() - 0.5) * 24,
+        r: Math.random() * 2.2 + 1.4,
+        phase: Math.random() * Math.PI * 2,
+        speed: Math.random() * 0.05 + 0.02,
+        leaf: false,
+        green: Math.random() < 0.35
+      });
+    }
+    for (let i = 0; i < 130; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = R * (0.86 + Math.random() * 0.22);
+      wreath.push({
+        leaf: true,
+        x: wx + Math.cos(a) * rr,
+        y: wy + Math.sin(a) * rr * 0.92,
+        z: wz + (Math.random() - 0.5) * 24,
+        r: Math.random() * 3 + 1.5,
+        phase: Math.random() * Math.PI * 2,
+        speed: 0.01,
+        green: true
+      });
+    }
+  }
+
+  // ---------- 渲染 ----------
+  function draw(t) {
+    // 深空背景渐变
+    const bg = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(W, H) * 0.75);
+    bg.addColorStop(0, '#07040f');
+    bg.addColorStop(0.5, '#04020a');
+    bg.addColorStop(1, '#000000');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+
+    // 相机拿着绕圣诞树一圈圈环绕拍摄；树始终居中，背景星空同步环绕视差
+    const ca = Math.cos(rot), sa = Math.sin(rot);
+
+    // 星云尘埃团
+    for (const n of nebulas) {
+      n.x += n.vx;
+      if (n.x < -W * 0.7) n.x = W * 0.7;
+      if (n.x > W * 0.7) n.x = -W * 0.7;
+      const nx = n.x * ca + n.z * sa;
+      const nz = -n.x * sa + n.z * ca;
+      const p = project(nx, n.y, nz);
+      const depth = Math.max(0.4, Math.min(1, p.s));
+      const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, n.r * depth);
+      grad.addColorStop(0, n.color);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, n.r * depth, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 穿梭星尘（近快远慢视差）
+    for (const d of dust) {
+      const near = (350 - d.z) / 1550;           // 0 远 -> 1 近
+      d.z += d.speed * (0.6 + near * 2.2);
+      if (d.visitor) {
+        d.x *= 0.995; d.y *= 0.995;             // 向中心收拢
+        if (d.z >= 0) {                          // 抵达圣诞树深度 -> 爱心烟花
+          const side = Math.random() < 0.5 ? -1 : 1;
+          const bx = side * R0 * (0.95 + Math.random() * 0.35);
+          const by = baseY - Hw * (0.2 + Math.random() * 0.5);
+          spawnHeartBurst(bx, by, 20);
+          Object.assign(d, spawnDust(false));
+          continue;
+        }
+      } else if (d.z > 350) {
+        Object.assign(d, spawnDust(false));
+      }
+      const rx = d.x * ca + d.z * sa;
+      const rz = -d.x * sa + d.z * ca;
+      const p = project(rx, d.y, rz);
+      const depth = Math.max(0.3, Math.min(1.6, p.s));
+      const tw = d.tw + Math.sin(d.phase + t * 0.03) * 0.2;
+      ctx.globalAlpha = Math.max(0.05, tw * depth);
+      ctx.fillStyle = d.bright ? '#ffffff' : '#cfd6ff';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, d.r * depth, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // 爱心烟花：先向四周爆炸迸发，再收拢聚成小爱心后淡出
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const s = sparks[i];
+      s.life -= s.decay;
+      if (s.life <= 0) { sparks.splice(i, 1); continue; }
+      const u = 1 - s.life;
+      let sx, sy, sz;
+      if (s.flash) {
+        sx = s.cx0; sy = s.cy0; sz = s.cz0;
+      } else if (u < 0.14) {
+        // 阶段一：烟花式向外迸发散射（放慢）
+        const k = u / 0.14;
+        const e = 1 - Math.pow(1 - k, 3);
+        sx = s.cx0 + (s.fx - s.cx0) * e;
+        sy = s.cy0 + (s.fy - s.cy0) * e;
+        sz = s.cz0 + (s.fz - s.cz0) * e;
+      } else {
+        // 阶段二：从散点缓慢收拢成爱心轮廓并停留
+        const k = (u - 0.14) / 0.86;
+        const e = 1 - Math.pow(1 - k, 3);
+        sx = s.fx + (s.ox - s.fx) * e;
+        sy = s.fy + (s.oy - s.fy) * e;
+        sz = s.fz + (s.oz - s.fz) * e;
+      }
+      const rx = sx * ca + sz * sa;
+      const rz = -sx * sa + sz * ca;
+      const p = project(rx, sy, rz);
+      const depth = Math.max(0.5, Math.min(1.3, p.s));
+      ctx.globalAlpha = Math.max(0, s.life);
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, s.size * depth * (0.6 + 0.4 * s.life), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    for (const p of tree) {
+      const xr = p.x * ca + p.z * sa;
+      const zr = -p.x * sa + p.z * ca;
+      const pr = project(xr, p.y, zr);
+      const depth = Math.max(0.35, Math.min(1.45, pr.s));
+      const tw = 0.72 + Math.sin(p.phase + t * p.speed) * 0.28;
+      if (p.ribbon) {
+        ctx.globalAlpha = Math.max(0.35, tw * depth);
+        ctx.fillStyle = '#fff6fd';
+        ctx.beginPath();
+        ctx.arc(pr.x, pr.y, p.r * depth * 1.15, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = Math.max(0.14, tw * depth * 0.85);
+        ctx.fillStyle = p.hue < 0.5 ? '#eccbe8' : '#d9b7e3';
+        ctx.beginPath();
+        ctx.arc(pr.x, pr.y, p.r * depth, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // 顶部爱心：固定不动，不参与环绕
+    for (const p of heart) {
+      const pr = project(p.x, p.y, p.z);
+      const depth = Math.max(0.5, Math.min(1.3, pr.s));
+      const tw = 0.6 + Math.sin(p.phase + t * p.speed) * 0.4;
+      ctx.globalAlpha = Math.max(0.2, tw * depth);
+      ctx.fillStyle = '#f7a8c4';
+      ctx.beginPath();
+      ctx.arc(pr.x, pr.y, p.r * depth, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 雪花：六角雪花飘落到底部后堆积停留
+    for (const s of snow) {
+      if (!s.landed) {
+        s.phase += 0.03;
+        s.y += s.vy;
+        s.x += Math.sin(s.phase) * s.sway * 0.4;
+        s.angle += s.spin;
+        if (s.y >= s.groundY) { s.landed = true; }
+      }
+      if (s.landed) {
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        drawSnowflake(s.x, s.y, s.r, s.angle, 0.95);
+      }
+    }
+    // 持续补充新雪，落地积雪封顶
+    if (snow.length < 700 && Math.random() < 0.5) snow.push(spawnSnow(false));
+    const landed = snow.filter(s => s.landed);
+    if (landed.length > 600) snow.splice(snow.indexOf(landed[0]), 1);
+
+    // 雪花慢慢落下、堆积成 LOVE U 字样
+    loveProgress = Math.min(1, loveProgress + 0.0012);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#ffffff';
+    for (const g of loveGlyphs) {
+      if (loveProgress < g.th) continue;
+      let k = (loveProgress - g.th) / (1 - g.th);
+      k = Math.min(1, k);
+      const e = 1 - Math.pow(1 - k, 3);
+      const px = g.sx + (g.tx - g.sx) * e;
+      const py = g.sy + (g.ty - g.sy) * e;
+      const base = 0.35 + g.a * 0.3;
+      const tw = (base + Math.sin(g.phase + t * 0.05) * 0.1) * e;
+      ctx.globalAlpha = tw;
+      ctx.beginPath();
+      ctx.arc(px, py, g.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.globalAlpha = 1;
+    rot += 0.003;
+    requestAnimationFrame(draw);
+  }
+
+  window.addEventListener('resize', resize);
+  resize();
+  requestAnimationFrame(draw);
+})();
+</script>
+
+<script>
+(function () {
+  const btn = document.getElementById('musicBtn');
+  let ctx = null, master = null;
+  let playing = false, step = 0, nextTime = 0, timer = null;
+  let padOscs = [];
+  const BEAT = 0.42;
+
+  const mf = m => 440 * Math.pow(2, (m - 69) / 12);
+
+  const melody = [
+    [76, 1], [79, 1], [84, 1], [79, 1],
+    [81, 1], [79, 1], [76, 1], [74, 1],
+    [72, 1], [76, 1], [79, 1], [76, 1],
+    [74, 1], [76, 1], [72, 2],
+    [76, 1], [79, 1], [84, 1], [88, 1],
+    [86, 1], [84, 1], [79, 1], [76, 1],
+    [72, 1], [76, 1], [79, 1], [76, 1],
+    [74, 2], [72, 2]
+  ];
+  const chords = [
+    [60, 64, 67],
+    [57, 60, 64],
+    [53, 57, 60],
+    [55, 59, 62]
+  ];
+
+  function bell(freq, time, dur, vol) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    const o2 = ctx.createOscillator(), g2 = ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq;
+    o2.type = 'sine'; o2.frequency.value = freq * 2;
+    g2.gain.value = 0.25;
+    g.gain.setValueAtTime(0, time);
+    g.gain.linearRampToValueAtTime(vol, time + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(master);
+    o.start(time); o2.start(time);
+    o.stop(time + dur + 0.05); o2.stop(time + dur + 0.05);
+  }
+
+  function stopPad() {
+    padOscs.forEach(o => { try { o.stop(); } catch (e) {} });
+    padOscs = [];
+  }
+
+  function playChord(midis, time, dur) {
+    stopPad();
+    midis.forEach(m => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'triangle'; o.frequency.value = mf(m);
+      g.gain.setValueAtTime(0, time);
+      g.gain.linearRampToValueAtTime(0.05, time + 1.2);
+      g.gain.setValueAtTime(0.05, time + dur - 1.2);
+      g.gain.linearRampToValueAtTime(0, time + dur);
+      o.connect(g); g.connect(master);
+      o.start(time); o.stop(time + dur + 0.05);
+      padOscs.push(o);
+    });
+  }
+
+  function scheduler() {
+    while (nextTime < ctx.currentTime + 0.6) {
+      const [midi, beats] = melody[step % melody.length];
+      const dur = BEAT * beats;
+      bell(mf(midi), nextTime, dur * 1.7, 0.16);
+      if (step % 8 === 0) {
+        const ch = chords[Math.floor(step / 8) % chords.length];
+        playChord(ch, nextTime, BEAT * 8);
+      }
+      nextTime += dur;
+      step++;
+    }
+  }
+
+  function start() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      master = ctx.createGain();
+      master.gain.value = 0.55;
+      master.connect(ctx.destination);
+    }
+    ctx.resume();
+    step = 0; nextTime = ctx.currentTime + 0.1;
+    timer = setInterval(scheduler, 180);
+  }
+
+  function stop() {
+    if (timer) { clearInterval(timer); timer = null; }
+    stopPad();
+    if (master) master.gain.linearRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
+  }
+
+  btn.addEventListener('click', () => {
+    playing = !playing;
+    if (playing) {
+      if (master) master.gain.value = 0.55;
+      start();
+      btn.classList.add('on');
+      btn.textContent = '♫';
+    } else {
+      stop();
+      btn.classList.remove('on');
+      btn.textContent = '♪';
+    }
+  });
+})();
+</script>
+</body>
+</html>
